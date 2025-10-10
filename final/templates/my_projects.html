@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block title %}My Projects | NameSprouts{% endblock %}
+{% block content %}
+
+<section class="projects">
+  <h2>My Saved Designs</h2>
+
+  {% if projects %}
+    <ul class="project-list">
+      {% for project in projects %}
+        <li>
+          <div class="project-card">
+            <img src="{{ project['flower_image'] }}" alt="Flower for {{ project['month'] }}">
+            <div class="project-info">
+              <h3>{{ project['name_text'] }}</h3>
+              <p><strong>{{ project['month']|capitalize }}</strong></p>
+              <p>Created on {{ project['created_at'] }}</p>
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>You don’t have any saved designs yet. Start <a href="{{ url_for('design') }}">designing</a>!</p>
+  {% endif %}
+</section>
+
+{% endblock %}

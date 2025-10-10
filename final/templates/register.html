@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% block title %}Register | NameSprouts{% endblock %}
+{% block content %}
+
+<div class="form-section">
+  <h2>Create Your Account</h2>
+  <form method="POST" action="{{ url_for('register') }}">
+    <label for="username">Username:</label>
+    <input type="text" id="username" name="username" required>
+
+    <label for="email">Email:</label>
+    <input type="email" id="email" name="email" required>
+
+    <label for="password">Password:</label>
+    <input type="password" id="password" name="password" required>
+
+    <button type="submit" class="btn">Register</button>
+  </form>
+
+  <p>Already have an account? <a href="{{ url_for('login') }}">Log in here</a>.</p>
+</div>
+
+{% endblock %}
