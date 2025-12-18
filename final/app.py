@@ -1,37 +1,54 @@
-from flask import Flask, render_template, request, redirect, url_for, session, g, jsonify
+from flask import (
+    Flask, render_template, request,
+    redirect, url_for, session, g, flash
+)
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
+from functools import wraps
+
+# =========================================================
+# APP CONFIGURATION
+# =========================================================
 
 app = Flask(__name__)
-app.secret_key = "super_secret_key_here"  # replace with environment variable for production
+
+app.secret_key = os.environ.get("FLASK_SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("FLASK_SECRET_KEY is not set")
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("FLASK_ENV") == "production",
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30)
+)
+
 DATABASE = "namesprouts.db"
 
-
-# ---------------- Database Helpers ---------------- #
+# =========================================================
+# DATABASE HELPERS
+# =========================================================
 
 def get_db():
-    """Connect to SQLite database; reuse connection if already open."""
-    db = getattr(g, "_database", None)
-    if db is None:
-        db = g._database = sqlite3.connect(DATABASE)
-        db.row_factory = sqlite3.Row  # allows name-based access to columns
-    return db
+    if "_database" not in g:
+        g._database = sqlite3.connect(DATABASE)
+        g._database.row_factory = sqlite3.Row
+        g._database.execute("PRAGMA foreign_keys = ON;")
+    return g._database
 
 
 @app.teardown_appcontext
 def close_db(exception):
-    """Close the database connection at the end of the request."""
-    db = getattr(g, "_database", None)
-    if db is not None:
+    db = g.pop("_database", None)
+    if db:
         db.close()
 
 
 def init_db():
-    """Initialize database tables if they don’t exist."""
     db = get_db()
-    cursor = db.cursor()
-    cursor.executescript("""
+    db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
@@ -44,51 +61,63 @@ def init_db():
             user_id INTEGER NOT NULL,
             name_text TEXT NOT NULL,
             month TEXT NOT NULL,
-            flower_image TEXT,
+            flower_image TEXT NOT NULL,
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
     """)
     db.commit()
 
+# =========================================================
+# AUTH UTILITIES
+# =========================================================
 
-# ---------------- Utility ---------------- #
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return view(*args, **kwargs)
+    return wrapped
 
-def logged_in():
-    """Check if user is logged in."""
-    return "user_id" in session
 
+def flower_image_path(month):
+    path = f"flowers/{month}.png"
+    full_path = os.path.join(app.static_folder, path)
+    return f"static/{path}" if os.path.exists(full_path) else "static/flowers/default.png"
 
-# ---------------- Routes ---------------- #
+# =========================================================
+# ROUTES
+# =========================================================
 
 @app.route("/")
 def home():
-    return render_template("design.html")
+    return redirect(url_for("design")) if "user_id" in session else redirect(url_for("login"))
 
+# ---------------- AUTH ---------------- #
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    """User registration route."""
     if request.method == "POST":
-        username = request.form.get("username")
-        email = request.form.get("email")
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
         password = request.form.get("password")
 
         if not username or not email or not password:
-            return "All fields required.", 400
+            flash("All fields are required")
+            return render_template("register.html")
 
-        hash_pw = generate_password_hash(password)
-
-        db = get_db()
         try:
-            db.execute(
+            get_db().execute(
                 "INSERT INTO users (username, email, hash) VALUES (?, ?, ?)",
-                (username, email, hash_pw),
+                (username, email, generate_password_hash(password))
             )
-            db.commit()
+            get_db().commit()
         except sqlite3.IntegrityError:
-            return "Username or email already exists.", 400
+            flash("Username or email already exists")
+            return render_template("register.html")
 
+        flash("Account created. Please log in.")
         return redirect(url_for("login"))
 
     return render_template("register.html")
@@ -96,18 +125,22 @@ def register():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Login route with password verification."""
     if request.method == "POST":
-        username = request.form.get("username")
+        username = request.form.get("username", "").strip()
         password = request.form.get("password")
 
-        db = get_db()
-        user = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        user = get_db().execute(
+            "SELECT * FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
 
-        if user is None or not check_password_hash(user["hash"], password):
-            return "Invalid username or password", 403
+        if not user or not check_password_hash(user["hash"], password):
+            flash("Invalid credentials")
+            return render_template("login.html")
 
+        session.clear()
         session["user_id"] = user["id"]
+        session.permanent = True
         return redirect(url_for("design"))
 
     return render_template("login.html")
@@ -115,73 +148,50 @@ def login():
 
 @app.route("/logout")
 def logout():
-    """Logout route clears session."""
     session.clear()
-    return redirect(url_for("home"))
+    return redirect(url_for("login"))
 
+# ---------------- DESIGN ---------------- #
 
 @app.route("/design", methods=["GET", "POST"])
+@login_required
 def design():
-    """Design page for creating and saving flower designs."""
-    if not logged_in():
-        return redirect(url_for("login"))
-
-    db = get_db()
-
     if request.method == "POST":
-        # When "Save" button is clicked (not the preview)
-        name = request.form.get("name")
+        name = request.form.get("name", "").strip()
         month = request.form.get("month")
-        flower_image = f"static/flowers/{month}.png"
 
-        db.execute(
+        if not name or not month:
+            flash("Name and month are required")
+            return render_template("design.html")
+
+        get_db().execute(
             """
             INSERT INTO projects (user_id, name_text, month, flower_image, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (session["user_id"], name, month, flower_image, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            (
+                session["user_id"],
+                name,
+                month,
+                flower_image_path(month),
+                datetime.utcnow().isoformat()
+            )
         )
-        db.commit()
-
+        get_db().commit()
         return redirect(url_for("my_projects"))
 
-    # For GET requests, just show design page
     return render_template("design.html")
 
-
-@app.route("/preview", methods=["POST"])
-def preview():
-    """
-    Optional API endpoint — returns JSON for live preview if needed later.
-    Currently, preview is handled client-side with JS canvas.
-    """
-    data = request.get_json()
-    name = data.get("name")
-    month = data.get("month")
-    return jsonify({
-        "status": "ok",
-        "message": f"Previewing {name} as a {month} flower"
-    })
-
+# ---------------- PROJECTS ---------------- #
 
 @app.route("/my_projects")
+@login_required
 def my_projects():
-    """Show all saved projects for logged-in user."""
-    if not logged_in():
-        return redirect(url_for("login"))
-
-    db = get_db()
-    projects = db.execute(
-        "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC",
-        (session["user_id"],),
-    ).fetchall()
-
-    return render_template("my_projects.html", projects=projects)
+    projects = get_db().execute(
+        """
+        SELECT *
+        FROM projects
+        WHERE user_id = ?
+        ORDER BY creat
 
 
-# ---------------- Main Entry ---------------- #
-
-if __name__ == "__main__":
-    with app.app_context():
-        init_db()
-    app.run(debug=True)

@@ -1,79 +1,115 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NameSprouts | Design</title>
+{% extends "layout.html" %}
+{% block content %}
 
-    <!-- Link to the updated stylesheet -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
-</head>
+<h1>Create Your Name Flower</h1>
 
-<body>
-    <!-- Navigation -->
-    <nav class="navbar">
-        <div class="nav-container">
-            <a href="/" class="logo">NameSprouts</a>
-            <ul class="nav-links">
-                <li><a href="{{ url_for('design') }}">Design</a></li>
-                <li><a href="{{ url_for('my_projects') }}">My Projects</a></li>
-                <li><a href="{{ url_for('logout') }}">Logout</a></li>
-            </ul>
-        </div>
-    </nav>
+<form method="POST" action="{{ url_for('design') }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">    
 
-    <!-- Main Content -->
-    <main class="preview-container">
+    <label for="nameInput">Name</label>
+    <input
+        type="text"
+        id="nameInput"
+        name="name"
+        placeholder="Enter a name"
+        required
+        autocomplete="off"
+    >
 
-        <!-- Preview Section -->
-        <h2 class="preview-title">Preview Your Name Design</h2>
-        <div id="previewArea" class="preview-text">your name</div>
+    <label for="monthSelect">Birth Month</label>
+    <select id="monthSelect" name="month" required>
+        <option value="">Select month</option>
+        <option value="january">January</option>
+        <option value="february">February</option>
+        <option value="march">March</option>
+        <option value="april">April</option>
+        <option value="may">May</option>
+        <option value="june">June</option>
+        <option value="july">July</option>
+        <option value="august">August</option>
+        <option value="september">September</option>
+        <option value="october">October</option>
+        <option value="november">November</option>
+        <option value="december">December</option>
+    </select>
 
-        <!-- Form Section -->
-        <form id="designForm" method="POST" class="form-container">
-            <input type="text" id="nameInput" name="name" placeholder="Enter your name" required>
+    <div class="preview-controls">
+        <button type="button" id="previewButton">Preview</button>
+        <button type="submit">Save Project</button>
+    </div>
 
-            <select name="month" id="monthSelect" required>
-                <option value="" disabled selected>Select birth month</option>
-                <option value="january">January</option>
-                <option value="february">February</option>
-                <option value="march">March</option>
-                <option value="april">April</option>
-                <option value="may">May</option>
-                <option value="june">June</option>
-                <option value="july">July</option>
-                <option value="august">August</option>
-                <option value="september">September</option>
-                <option value="october">October</option>
-                <option value="november">November</option>
-                <option value="december">December</option>
-            </select>
+</form>
 
-            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-                <button type="button" id="previewButton">Preview</button>
-                <button type="submit">Save</button>
-            </div>
-        </form>
-    </main>
+<!-- PREVIEW AREA -->
+<div class="preview-area" aria-live="polite">
 
-    <!-- Live Preview Script -->
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            const nameInput = document.getElementById("nameInput");
-            const previewText = document.getElementById("previewArea");
-            const previewButton = document.getElementById("previewButton");
+    <img
+        id="flowerImg"
+        src="/static/flowers/default.png"
+        alt="Flower preview"
+    >
 
-            // Live typing preview
-            nameInput.addEventListener("input", () => {
-                previewText.textContent = nameInput.value || "your name";
-            });
+    <div id="stemLetters" class="stem-letters"></div>
 
-            // Optional explicit preview button (redundant but keeps UX clear)
-            previewButton.addEventListener("click", () => {
-                previewText.textContent = nameInput.value || "your name";
-                previewText.style.fontFamily = "'Allura', 'Dancing Script', cursive";
-            });
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+
+    const nameInput = document.getElementById("nameInput");
+    const monthSelect = document.getElementById("monthSelect");
+    const previewButton = document.getElementById("previewButton");
+    const flowerImg = document.getElementById("flowerImg");
+    const stemLetters = document.getElementById("stemLetters");
+
+    function updatePreview() {
+
+        const rawName = nameInput.value.trim();
+
+        // Reset preview if empty
+        if (!rawName) {
+            stemLetters.innerHTML = "";
+            flowerImg.src = "/static/flowers/default.png";
+            return;
+        }
+
+        stemLetters.innerHTML = "";
+
+        // Normalize: letters only for preview
+        const letters = rawName.replace(/[^a-zA-Z]/g, "").split("");
+
+        if (!letters.length) return;
+
+        // Bottom stem letter (lowercase)
+        const bottomSpan = document.createElement("div");
+        bottomSpan.classList.add("stem-letter", "stem-start");
+        bottomSpan.textContent = letters[0].toLowerCase();
+        stemLetters.appendChild(bottomSpan);
+
+        // Remaining letters (bottom → top)
+        letters.slice(1).reverse().forEach(char => {
+            const span = document.createElement("div");
+            span.classList.add("stem-letter");
+            span.textContent = char;
+            stemLetters.appendChild(span);
         });
-    </script>
-</body>
-</html>
+
+        // Flower image by month
+        if (monthSelect.value) {
+            flowerImg.src = `/static/flowers/${monthSelect.value}.png`;
+            flowerImg.onerror = () => {
+                flowerImg.src = "/static/flowers/default.png";
+            };
+        }
+    }
+
+    nameInput.addEventListener("input", updatePreview);
+    monthSelect.addEventListener("change", updatePreview);
+    previewButton.addEventListener("click", updatePreview);
+
+});
+</script>
+
+{% endblock %}
+
+
