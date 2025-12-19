@@ -3,10 +3,17 @@ from flask import (
     redirect, url_for, session, g, flash
 )
 import sqlite3
+from flask_wtf import CSRFProtect
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import os
 from functools import wraps
+import re
+
+@app.template_filter("regex_replace")
+def regex_replace(s, find, replace=""):
+    return re.sub(find, replace, s)
+
 
 # =========================================================
 # APP CONFIGURATION
@@ -26,6 +33,7 @@ app.config.update(
 )
 
 DATABASE = "namesprouts.db"
+csrf = CSRFProtect(app)
 
 # =========================================================
 # DATABASE HELPERS
@@ -76,6 +84,7 @@ def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if "user_id" not in session:
+            flash("Please log in to continue.", "error")
             return redirect(url_for("login"))
         return view(*args, **kwargs)
     return wrapped
@@ -104,20 +113,21 @@ def register():
         password = request.form.get("password")
 
         if not username or not email or not password:
-            flash("All fields are required")
-            return render_template("register.html")
+            flash("All fields are required.", "error")
+            return redirect(url_for("register"))
 
         try:
-            get_db().execute(
+            db = get_db()
+            db.execute(
                 "INSERT INTO users (username, email, hash) VALUES (?, ?, ?)",
                 (username, email, generate_password_hash(password))
             )
-            get_db().commit()
+            db.commit()
         except sqlite3.IntegrityError:
-            flash("Username or email already exists")
-            return render_template("register.html")
+            flash("Username or email already exists.", "error")
+            return redirect(url_for("register"))
 
-        flash("Account created. Please log in.")
+        flash("Account created successfully. Please log in.", "success")
         return redirect(url_for("login"))
 
     return render_template("register.html")
@@ -135,12 +145,14 @@ def login():
         ).fetchone()
 
         if not user or not check_password_hash(user["hash"], password):
-            flash("Invalid credentials")
-            return render_template("login.html")
+            flash("Invalid username or password.", "error")
+            return redirect(url_for("login"))
 
         session.clear()
         session["user_id"] = user["id"]
         session.permanent = True
+
+        flash("Welcome back 🌸", "success")
         return redirect(url_for("design"))
 
     return render_template("login.html")
@@ -149,6 +161,7 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
+    flash("You have been logged out.", "success")
     return redirect(url_for("login"))
 
 # ---------------- DESIGN ---------------- #
@@ -161,10 +174,11 @@ def design():
         month = request.form.get("month")
 
         if not name or not month:
-            flash("Name and month are required")
-            return render_template("design.html")
+            flash("Please enter a name and select a month.", "error")
+            return redirect(url_for("design"))
 
-        get_db().execute(
+        db = get_db()
+        db.execute(
             """
             INSERT INTO projects (user_id, name_text, month, flower_image, created_at)
             VALUES (?, ?, ?, ?, ?)
@@ -177,21 +191,103 @@ def design():
                 datetime.utcnow().isoformat()
             )
         )
-        get_db().commit()
+        db.commit()
+
+        flash("Design saved successfully 🌿", "success")
         return redirect(url_for("my_projects"))
 
     return render_template("design.html")
 
 # ---------------- PROJECTS ---------------- #
 
-@app.route("/my_projects")
+@app.route("/edit/<int:project_id>", methods=["GET", "POST"])
 @login_required
-def my_projects():
-    projects = get_db().execute(
+def edit_project(project_id):
+    db = get_db()
+
+    # Fetch project and enforce ownership
+    project = db.execute(
         """
         SELECT *
         FROM projects
-        WHERE user_id = ?
-        ORDER BY creat
+        WHERE id = ? AND user_id = ?
+        """,
+        (project_id, session["user_id"])
+    ).fetchone()
+
+    if not project:
+        flash("Project not found or access denied.", "error")
+        return redirect(url_for("my_projects"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        month = request.form.get("month")
+
+        if not name or not month:
+            flash("Name and month are required.", "error")
+            return redirect(url_for("edit_project", project_id=project_id))
+
+        db.execute(
+            """
+            UPDATE projects
+            SET name_text = ?, month = ?, flower_image = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                name,
+                month,
+                flower_image_path(month),
+                project_id,
+                session["user_id"]
+            )
+        )
+        db.commit()
+
+        flash("Project updated successfully 🌸", "success")
+        return redirect(url_for("my_projects"))
+
+    return render_template("edit_project.html", project=project)
+@app.route("/delete/<int:project_id>", methods=["POST"])
+@login_required
+def delete_project(project_id):
+    db = get_db()
+
+    # Enforce ownership
+    project = db.execute(
+        """
+        SELECT id
+        FROM projects
+        WHERE id = ? AND user_id = ?
+        """,
+        (project_id, session["user_id"])
+    ).fetchone()
+
+    if not project:
+        flash("Project not found or access denied.", "error")
+        return redirect(url_for("my_projects"))
+
+    db.execute(
+        "DELETE FROM projects WHERE id = ? AND user_id = ?",
+        (project_id, session["user_id"])
+    )
+    db.commit()
+
+    flash("Project deleted successfully 🗑️", "success")
+    return redirect(url_for("my_projects"))
+
+
+
+# =========================================================
+# ERROR HANDLERS
+# =========================================================
+
+@app.errorhandler(404)
+def not_found(error):
+    return render_template("404.html"), 404
+
+
+@app.errorhandler(500)
+def server_error(error):
+    return render_template("500.html"), 500
 
 
