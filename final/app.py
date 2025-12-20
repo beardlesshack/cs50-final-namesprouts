@@ -10,13 +10,8 @@ import os
 from functools import wraps
 import re
 
-@app.template_filter("regex_replace")
-def regex_replace(s, find, replace=""):
-    return re.sub(find, replace, s)
-
-
 # =========================================================
-# APP CONFIGURATION
+# APP INITIALIZATION (MUST COME FIRST)
 # =========================================================
 
 app = Flask(__name__)
@@ -34,6 +29,14 @@ app.config.update(
 
 DATABASE = "namesprouts.db"
 csrf = CSRFProtect(app)
+
+# =========================================================
+# TEMPLATE FILTERS (AFTER app EXISTS)
+# =========================================================
+
+@app.template_filter("regex_replace")
+def regex_replace(s, find, replace=""):
+    return re.sub(find, replace, s)
 
 # =========================================================
 # DATABASE HELPERS
@@ -205,7 +208,6 @@ def design():
 def edit_project(project_id):
     db = get_db()
 
-    # Fetch project and enforce ownership
     project = db.execute(
         """
         SELECT *
@@ -247,12 +249,13 @@ def edit_project(project_id):
         return redirect(url_for("my_projects"))
 
     return render_template("edit_project.html", project=project)
+
+
 @app.route("/delete/<int:project_id>", methods=["POST"])
 @login_required
 def delete_project(project_id):
     db = get_db()
 
-    # Enforce ownership
     project = db.execute(
         """
         SELECT id
@@ -275,8 +278,6 @@ def delete_project(project_id):
     flash("Project deleted successfully 🗑️", "success")
     return redirect(url_for("my_projects"))
 
-
-
 # =========================================================
 # ERROR HANDLERS
 # =========================================================
@@ -289,5 +290,3 @@ def not_found(error):
 @app.errorhandler(500)
 def server_error(error):
     return render_template("500.html"), 500
-
-
