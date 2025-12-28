@@ -11,7 +11,7 @@ from functools import wraps
 import re
 
 # =========================================================
-# APP INITIALIZATION (MUST COME FIRST)
+# APP INITIALIZATION 
 # =========================================================
 
 app = Flask(__name__)
